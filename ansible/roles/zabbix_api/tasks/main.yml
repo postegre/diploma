@@ -1,0 +1,306 @@
+---
+# Базовые факты (можно переопределить в group_vars)
+- name: Defaults for API
+  set_fact:
+    _zbx_url:  "{{ zbx_api_url  | default('http://localhost/zabbix/api_jsonrpc.php') }}"
+    _zbx_user: "{{ zbx_api_user | default('Admin') }}"
+    _zbx_pass: "{{ zbx_api_password | default('zabbix') }}"
+    _zbx_group: "{{ zbx_autoreg_group | default('Linux servers') }}"
+
+- name: Ensure curl/jq present
+  become: true
+  apt:
+    name: [ curl, jq ]
+    state: present
+    update_cache: yes
+
+# ── ПРОБА ФРОНТЕНДА (необязательно)
+- name: Probe frontend index
+  uri:
+    url: "{{ _zbx_url | regex_replace('/api_jsonrpc\\.php$', '/index.php') }}"
+    method: GET
+    follow_redirects: all
+    return_content: no
+    status_code: [200, 302, 401, 403]
+  register: _probe
+  failed_when: false
+  changed_when: false
+
+# ── LOGIN v7 (username)
+- name: Zabbix API login (v7+, username)
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "user.login"
+      id: 1
+      params:
+        username: "{{ _zbx_user }}"
+        password: "{{ _zbx_pass }}"
+  register: _zbx_login_v7
+  failed_when: false
+  changed_when: false
+
+# ── LOGIN v6 (user) fallback
+- name: Zabbix API login (v6-, user) — fallback
+  when: not (_zbx_login_v7.json is defined and _zbx_login_v7.json.result is defined)
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "user.login"
+      id: 1
+      params:
+        user: "{{ _zbx_user }}"
+        password: "{{ _zbx_pass }}"
+  register: _zbx_login_v6
+  failed_when: false
+  changed_when: false
+
+# Выбираем токен
+- name: Set auth token from v7 or v6
+  set_fact:
+    _zbx_auth: >-
+      {{
+        (_zbx_login_v7.json.result
+         if (_zbx_login_v7.json is defined and _zbx_login_v7.json.result is defined)
+         else (_zbx_login_v6.json.result
+               if (_zbx_login_v6 is defined and _zbx_login_v6.json is defined and _zbx_login_v6.json.result is defined)
+               else omit))
+      }}
+
+- name: Fail if auth token is missing (show responses)
+  when: _zbx_auth is not defined
+  fail:
+    msg: >-
+      Zabbix API login failed.
+      v7 response={{ _zbx_login_v7.json | default(_zbx_login_v7) }}
+      v6 response={{ (_zbx_login_v6.json | default(_zbx_login_v6)) if (_zbx_login_v6 is defined) else 'n/a' }}
+
+# ── HOST GROUP ensure
+- name: Get host group by name
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "hostgroup.get"
+      id: 2
+      auth: "{{ _zbx_auth }}"
+      params:
+        output: ["groupid","name"]
+        filter:
+          name: ["{{ _zbx_group }}"]
+  register: _zbx_group_get
+  changed_when: false
+
+- name: Create host group if missing
+  when: (_zbx_group_get.json.result | length) == 0
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "hostgroup.create"
+      id: 3
+      auth: "{{ _zbx_auth }}"
+      params:
+        name: "{{ _zbx_group }}"
+  register: _zbx_group_create
+  changed_when: true
+  failed_when: _zbx_group_create.json.error is defined
+
+- name: Set hostgroup id fact
+  set_fact:
+    _zbx_groupid: >-
+      {{
+        (_zbx_group_get.json.result[0].groupid
+          if (_zbx_group_get.json.result|length)>0
+          else _zbx_group_create.json.result.groupids[0])
+      }}
+
+# ── AUTOREG ACTION ensure (без esc_period для Zabbix 7)
+- name: Find existing autoreg action
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "action.get"
+      id: 4
+      auth: "{{ _zbx_auth }}"
+      params:
+        output: ["actionid","name","eventsource","status"]
+        filter:
+          eventsource: 2
+        search:
+          name: "Auto register Linux servers"
+  register: _zbx_action_get
+  changed_when: false
+
+- name: Create autoreg action if missing
+  when: (_zbx_action_get.json.result | length) == 0
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "action.create"
+      id: 5
+      auth: "{{ _zbx_auth }}"
+      params:
+        name: "Auto register Linux servers"
+        eventsource: 2        # AUTOREGISTRATION
+        status: 0             # enabled
+        filter:
+          evaltype: 0
+          conditions: []
+        operations:
+          - operationtype: 4  # Add to host group
+            opgroup:
+              - groupid: "{{ _zbx_groupid }}"
+  register: _zbx_action_create
+  changed_when: true
+  failed_when: _zbx_action_create.json.error is defined
+
+- name: Enable existing autoreg action if disabled
+  when: (_zbx_action_get.json.result | length) > 0 and _zbx_action_get.json.result[0].status | string != "0"
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "action.update"
+      id: 6
+      auth: "{{ _zbx_auth }}"
+      params:
+        actionid: "{{ _zbx_action_get.json.result[0].actionid }}"
+        status: 0
+  register: _zbx_action_update
+  changed_when: true
+  failed_when: _zbx_action_update.json.error is defined
+
+# ── LOGOUT (best-effort)
+- name: Zabbix API logout
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "user.logout"
+      id: 7
+      auth: "{{ _zbx_auth }}"
+  failed_when: false
+  changed_when: false
+
+# ── TEMPLATE: "Linux by Zabbix agent"
+- name: Get 'Linux by Zabbix agent' template id
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "template.get"
+      id: 10
+      auth: "{{ _zbx_auth }}"
+      params:
+        output: ["templateid","name"]
+        filter:
+          name: ["Linux by Zabbix agent"]
+  register: _zbx_tpl_linux
+  changed_when: false
+  failed_when: _zbx_tpl_linux.json.error is defined
+
+- name: Set template id fact
+  set_fact:
+    _zbx_tpl_linux_id: "{{ _zbx_tpl_linux.json.result[0].templateid }}"
+  when: (_zbx_tpl_linux.json.result | length) > 0
+
+# Если экшена ещё нет, создадим его заново уже с привязкой шаблона
+- name: Create autoreg action with template if missing
+  when: (_zbx_action_get.json.result | length) == 0 and (_zbx_tpl_linux_id is defined)
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "action.create"
+      id: 11
+      auth: "{{ _zbx_auth }}"
+      params:
+        name: "Auto register Linux servers"
+        eventsource: 2
+        status: 0
+        filter:
+          evaltype: 0
+          conditions: []
+        operations:
+          - operationtype: 4      # Add to host group
+            opgroup:
+              - groupid: "{{ _zbx_groupid }}"
+          - operationtype: 6      # Link template
+            optemplate:
+              - templateid: "{{ _zbx_tpl_linux_id }}"
+  register: _zbx_action_create2
+  changed_when: true
+  failed_when: _zbx_action_create2.json.error is defined
+
+# Если экшен уже существовал — обновим его операциями (перезапишем operations)
+- name: Ensure existing autoreg action has group+template ops and enabled
+  when: (_zbx_action_get.json.result | length) > 0 and (_zbx_tpl_linux_id is defined)
+  uri:
+    url: "{{ _zbx_url }}"
+    method: POST
+    body_format: json
+    return_content: yes
+    headers: { Content-Type: "application/json-rpc" }
+    body:
+      jsonrpc: "2.0"
+      method: "action.update"
+      id: 12
+      auth: "{{ _zbx_auth }}"
+      params:
+        actionid: "{{ _zbx_action_get.json.result[0].actionid }}"
+        status: 0
+        operations:
+          - operationtype: 4
+            opgroup:
+              - groupid: "{{ _zbx_groupid }}"
+          - operationtype: 6
+            optemplate:
+              - templateid: "{{ _zbx_tpl_linux_id }}"
+  register: _zbx_action_update_ops
+  changed_when: true
+  failed_when: _zbx_action_update_ops.json.error is defined

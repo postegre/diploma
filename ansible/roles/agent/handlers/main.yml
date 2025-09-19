@@ -1,0 +1,18 @@
+---
+# Один общий слушатель под то имя, что у тебя в notify:
+- name: Restart zabbix-agent
+  listen: "validate and restart zabbix-agent"
+  become: true
+  ansible.builtin.service:
+    name: zabbix-agent
+    state: restarted
+    enabled: true
+
+# (Опционально) Синоним, если где-то осталось notify: "restart zabbix-agent"
+- name: Restart zabbix-agent (alias)
+  listen: "restart zabbix-agent"
+  become: true
+  ansible.builtin.service:
+    name: zabbix-agent
+    state: restarted
+    enabled: true

@@ -1,0 +1,109 @@
+---
+# Установка (repo по умолчанию, deb — опционально)
+- name: Ensure filebeat installed from repo
+  apt:
+    name: filebeat
+    state: present
+    update_cache: yes
+  when: (filebeat_install_method | default('repo')) == 'repo'
+  tags: [filebeat, filebeat_install]
+
+- name: Copy local deb package
+  copy:
+    src: "{{ filebeat_deb_local }}"
+    dest: "/tmp/{{ filebeat_pkg_file }}"
+    mode: "0644"
+  when: (filebeat_install_method | default('repo')) == 'deb'
+  tags: [filebeat, filebeat_install]
+
+- name: Install filebeat from local deb
+  apt:
+    deb: "/tmp/{{ filebeat_pkg_file }}"
+    state: present
+  when: (filebeat_install_method | default('repo')) == 'deb'
+  tags: [filebeat, filebeat_install]
+
+# Конфиг
+- name: Deploy /etc/filebeat/filebeat.yml
+  template:
+    src: filebeat.yml.j2
+    dest: /etc/filebeat/filebeat.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart filebeat
+  tags: [filebeat, filebeat_config]
+
+- name: Ensure modules.d dir exists
+  file:
+    path: /etc/filebeat/modules.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [filebeat, filebeat_config]
+
+# Модуль nginx включаем ТОЛЬКО если запрошено
+- name: Deploy nginx module config (enable access+error)
+  template:
+    src: modules.d/nginx.yml.j2
+    dest: /etc/filebeat/modules.d/nginx.yml
+    owner: root
+    group: root
+    mode: "0644"
+  when: filebeat_enable_nginx_module | default(false) | bool
+  notify: Restart filebeat
+  tags: [filebeat, filebeat_config]
+
+# Старт/enable
+- name: Enable & start filebeat
+  service:
+    name: filebeat
+    enabled: yes
+    state: started
+  tags: [filebeat]
+
+# ------- One-time setup (дашборды/шаблоны) на первом хосте web -------
+- name: Check filebeat setup marker
+  stat:
+    path: /etc/filebeat/.setup_done
+  register: setup_marker_stat
+  when:
+    - groups.web is defined
+    - inventory_hostname == groups['web'][0]
+  tags: [filebeat, filebeat_setup]
+
+- name: Run filebeat setup (optional, first web only)
+  command: >
+    filebeat setup
+    -E output.elasticsearch.hosts={{ filebeat_elasticsearch_url }}
+    -E setup.kibana.host={{ filebeat_kibana_url }}
+  args:
+    warn: false
+  when:
+    - filebeat_setup_enabled | default(false) | bool
+    - (filebeat_kibana_url | default('')) | length > 0
+    - groups.web is defined
+    - inventory_hostname == groups['web'][0]
+    - not (setup_marker_stat.stat.exists | default(false))
+  register: fb_setup
+  changed_when: fb_setup.rc == 0
+  failed_when: fb_setup.rc not in [0]
+  tags: [filebeat, filebeat_setup]
+  notify: Restart filebeat
+
+- name: Mark filebeat setup done
+  file:
+    path: /etc/filebeat/.setup_done
+    state: touch
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - filebeat_setup_enabled | default(false) | bool
+    - (filebeat_kibana_url | default('')) | length > 0
+    - groups.web is defined
+    - inventory_hostname == groups['web'][0]
+    - fb_setup is defined
+    - fb_setup.rc == 0
+  tags: [filebeat, filebeat_setup]

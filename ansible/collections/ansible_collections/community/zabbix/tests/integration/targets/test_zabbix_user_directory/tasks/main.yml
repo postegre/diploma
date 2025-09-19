@@ -1,0 +1,10 @@
+---
+- block:
+    - include_tasks: zabbix_user_directory_tests.yml
+
+  always:
+    - name: Cleanup
+      community.zabbix.zabbix_user_directory:
+        name: TestUserDirectory
+        state: absent
+      ignore_errors: true

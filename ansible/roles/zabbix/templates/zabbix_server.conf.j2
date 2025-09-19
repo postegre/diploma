@@ -1,0 +1,16 @@
+### Managed by Ansible
+
+DBHost={{ zbx_db_host }}
+DBPort={{ zbx_db_port }}
+DBName={{ zbx_db_name }}
+DBUser={{ zbx_db_user }}
+DBPassword={{ zbx_db_password }}
+
+StartPollers=5
+CacheSize=128M
+HistoryCacheSize=64M
+HistoryIndexCacheSize=64M
+TrendCacheSize=64M
+LogType=file
+LogFile=/var/log/zabbix/zabbix_server.log
+PidFile=/run/zabbix/zabbix_server.pid

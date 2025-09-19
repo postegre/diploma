@@ -1,0 +1,15 @@
+---
+# URL API — локально на zabbix-хосте
+zbx_api_url: "http://127.0.0.1/zabbix"
+zbx_api_user: "Admin"
+zbx_api_pass: "zabbix"
+
+# Куда складывать новые хосты
+zbx_autoreg_group: "Linux servers"
+
+# Какой шаблон вешать при авто-регистрации (из стандартных)
+zbx_autoreg_templates:
+  - "Linux by Zabbix agent"
+
+# Значение HostMetadata, которое ждём от агентов
+zbx_autoreg_metadata_value: "linux"

@@ -1,0 +1,9 @@
+ansible_user: ubuntu
+ansible_ssh_private_key_file: /home/postegre/.ssh/id_rsa
+
+# По умолчанию все (включая web) шлют логи на elastic1 по его ansible_host
+filebeat_elasticsearch_url: "http://{{ hostvars['elastic1'].ansible_host }}:9200"
+
+# Дефолтно не включаем модули и не запускаем setup с web
+filebeat_enable_nginx_module: false
+filebeat_setup_enabled: false

@@ -1,0 +1,217 @@
+---
+# 1) Базовые пакеты, GPG ключ, репозиторий
+- name: Ensure base packages present
+  apt:
+    name:
+      - ca-certificates
+      - wget
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: true
+  become: true
+
+- name: Fetch Zabbix GPG key via curl with retries
+  shell: |
+    set -e
+    curl -fsSL "{{ zbx_repo_key_url }}" -o /tmp/zabbix.asc
+  args:
+    creates: /tmp/zabbix.asc
+  register: zbx_key_dl
+  retries: 3
+  delay: 3
+  until: zbx_key_dl.rc == 0
+  become: true
+
+- name: Ensure Zabbix keyring exists in trusted store
+  command: >
+    gpg --dearmor --output /etc/apt/trusted.gpg.d/zabbix.gpg /tmp/zabbix.asc
+  args:
+    creates: /etc/apt/trusted.gpg.d/zabbix.gpg
+  become: true
+
+- name: Add Zabbix APT repo ({{ zbx_major }})
+  apt_repository:
+    repo: "deb {{ zbx_repo_base }} {{ ansible_lsb.codename | default('jammy') }} main"
+    filename: zabbix
+    state: present
+    update_cache: yes
+  become: true
+
+# 2) Установка серверных компонентов и PostgreSQL
+- name: Install Zabbix server + frontend + PostgreSQL
+  apt:
+    name:
+      - zabbix-server-pgsql
+      - zabbix-frontend-php
+      - zabbix-apache-conf
+      - zabbix-sql-scripts
+      - apache2
+      - postgresql
+      - postgresql-contrib
+      - php-pgsql
+      - python3-psycopg2
+    state: present
+    update_cache: yes
+  become: true
+
+- name: Ensure PostgreSQL is running
+  service:
+    name: postgresql
+    state: started
+    enabled: true
+  become: true
+
+# 3) Создание пользователя/БД Zabbix с template0 (во избежание проблем с collation)
+- name: Create Zabbix DB user
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ zbx_db_user }}"
+    password: "{{ zbx_db_pass }}"
+    role_attr_flags: LOGIN
+    state: present
+
+- name: Create Zabbix DB (UTF8, template0)
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ zbx_db_name }}"
+    encoding: "UTF8"
+    template: template0
+    owner: "{{ zbx_db_user }}"
+    state: present
+
+# 4) Разрешение md5-логина по localhost в pg_hba.conf
+- name: Find pg_hba.conf
+  shell: |
+    set -e
+    for d in /etc/postgresql/*/main; do
+      if [ -f "$d/pg_hba.conf" ]; then echo "$d/pg_hba.conf"; exit 0; fi
+    done
+    exit 1
+  register: pg_hba
+  changed_when: false
+  become: true
+
+- name: Ensure pg_hba allows md5 from 127.0.0.1
+  lineinfile:
+    path: "{{ pg_hba.stdout }}"
+    regexp: '^\s*host\s+all\s+all\s+127\.0\.0\.1/32\s+'
+    line: 'host    all             all             127.0.0.1/32            md5'
+    state: present
+    insertafter: EOF
+  become: true
+  notify: reload apache2   # не критично, но перезагрузим сервисы ниже
+
+- name: Reload PostgreSQL to apply pg_hba
+  service:
+    name: postgresql
+    state: reloaded
+  become: true
+
+# 5) Импорт схемы Zabbix (идемпотентно)
+- name: Ensure schema marker dir exists
+  file:
+    path: /var/lib/zabbix
+    state: directory
+    owner: zabbix
+    group: zabbix
+    mode: '0750'
+  become: true
+
+- name: Import Zabbix DB schema (idempotent; via TCP with password)
+  shell: |
+    set -e
+    test -f /var/lib/zabbix/.schema_loaded && exit 0
+    export PGPASSWORD="{{ zbx_db_pass }}"
+    zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz | psql -h "{{ zbx_db_host }}" -p "{{ zbx_db_port }}" -U "{{ zbx_db_user }}" -d "{{ zbx_db_name }}"
+    touch /var/lib/zabbix/.schema_loaded
+  args:
+    executable: /bin/bash
+  become: true
+
+# 6) Конфиг zabbix_server.conf
+- name: Configure zabbix_server.conf
+  blockinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK"
+    block: |
+      DBName={{ zbx_db_name }}
+      DBUser={{ zbx_db_user }}
+      DBPassword={{ zbx_db_pass }}
+      DBHost={{ zbx_db_host }}
+      DBPort={{ zbx_db_port }}
+      StartPollers={{ zbx_server_startpollers }}
+  notify: restart zabbix-server
+  become: true
+
+# 7) Apache: фронтенд /zabbix (полностью управляем файлом)
+- name: Deploy /etc/zabbix/apache.conf (frontend alias /zabbix)
+  template:
+    src: apache.conf.j2
+    dest: /etc/zabbix/apache.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+
+- name: Ensure /etc/apache2/conf-available/zabbix.conf symlink points to /etc/zabbix/apache.conf
+  file:
+    src: /etc/zabbix/apache.conf
+    dest: /etc/apache2/conf-available/zabbix.conf
+    state: link
+    force: true
+  become: true
+
+- name: Ensure /etc/apache2/conf-enabled/zabbix.conf enabled (symlink)
+  file:
+    src: ../conf-available/zabbix.conf
+    dest: /etc/apache2/conf-enabled/zabbix.conf
+    state: link
+    force: true
+  become: true
+  notify: reload apache2
+
+- name: Ensure php8.1 module enabled
+  apache2_module:
+    name: php8.1
+    state: present
+  become: true
+  notify: reload apache2
+
+# 8) Конфиг фронтенда (пропускает мастер)
+- name: Ensure /etc/zabbix/web exists
+  file:
+    path: /etc/zabbix/web
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0750'
+  become: true
+
+- name: Deploy /etc/zabbix/web/zabbix.conf.php
+  template:
+    src: zabbix.conf.php.j2
+    dest: /etc/zabbix/web/zabbix.conf.php
+    owner: www-data
+    group: www-data
+    mode: '0400'
+  become: true
+  notify: reload apache2
+
+# 9) Сервисы
+- name: Enable and start zabbix-server
+  service:
+    name: zabbix-server
+    state: started
+    enabled: true
+  become: true
+
+- name: Ensure apache2 running
+  service:
+    name: apache2
+    state: started
+    enabled: true
+  become: true

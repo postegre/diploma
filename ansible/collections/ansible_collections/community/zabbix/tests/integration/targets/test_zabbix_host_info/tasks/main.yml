@@ -1,0 +1,148 @@
+---
+- name: "test - Prepare host for zabbix_host_info module"
+  community.zabbix.zabbix_host:
+    host_name: ExampleHostForHostInfoModule
+    visible_name: ExampleHostForHostInfoModuleName
+    description: Test Host
+    host_groups:
+      - Linux servers
+      - Hypervisors
+    link_templates:
+      - Zabbix server health
+    status: enabled
+    inventory_mode: manual
+    inventory_zabbix:
+      tag: tag1
+      os: Linux
+    interfaces:
+      - type: 1
+        main: 1
+        useip: 1
+        ip: 192.168.0.1
+        dns: ""
+        port: 10050
+    state: present
+  register: prepare_host_result
+
+- ansible.builtin.assert:
+    that:
+      - prepare_host_result.changed is sameas true
+
+- name: "test - Gather zabbix host facts using environment variables"
+  community.zabbix.zabbix_host_info:
+    host_name: ExampleHostForHostInfoModule
+  register: env_vars_usage
+  environment:
+    ZABBIX_VALIDATE_CERTS: false
+
+- ansible.builtin.assert:
+    that:
+      - env_vars_usage.hosts[0].name == "ExampleHostForHostInfoModuleName"
+
+- name: "test - Set default parameters to zabbix_host_info"
+  module_defaults:
+    community.zabbix.zabbix_host_info:
+      host_name: ExampleHostForHostInfoModule
+
+  block:
+    - name: "test - Gather all facts of zabbix host"
+      community.zabbix.zabbix_host_info:
+      register: gather_all_facts_result
+
+    - when: zabbix_version is version('6.0', '=')
+      ansible.builtin.assert:
+        that:
+          - gather_all_facts_result.hosts | length == 1
+          - gather_all_facts_result.hosts.0.host == "ExampleHostForHostInfoModule"
+          - gather_all_facts_result.hosts.0.name == "ExampleHostForHostInfoModuleName"
+          - gather_all_facts_result.hosts.0.description == "Test Host"
+          - gather_all_facts_result.hosts.0.groups.0.name == "Linux servers"
+          - gather_all_facts_result.hosts.0.groups.1.name == "Hypervisors"
+          - gather_all_facts_result.hosts.0.parentTemplates.0.name == "Zabbix server health"
+          - gather_all_facts_result.hosts.0.status == "0"
+          - gather_all_facts_result.hosts.0.inventory_mode == "0"
+          - gather_all_facts_result.hosts.0.inventory.tag == "tag1"
+          - gather_all_facts_result.hosts.0.inventory.os == "Linux"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.dns == ""
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.ip == "192.168.0.1"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.main == "1"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.port == "10050"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.type == "1"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.useip == "1"
+
+    - when: zabbix_version is version('7.0', '>=')
+      ansible.builtin.assert:
+        that:
+          - gather_all_facts_result.hosts | length == 1
+          - gather_all_facts_result.hosts.0.host == "ExampleHostForHostInfoModule"
+          - gather_all_facts_result.hosts.0.name == "ExampleHostForHostInfoModuleName"
+          - gather_all_facts_result.hosts.0.description == "Test Host"
+          - gather_all_facts_result.hosts.0.hostgroups.0.name == "Hypervisors"
+          - gather_all_facts_result.hosts.0.hostgroups.1.name == "Linux servers"
+          - gather_all_facts_result.hosts.0.parentTemplates.0.name == "Zabbix server health"
+          - gather_all_facts_result.hosts.0.status == "0"
+          - gather_all_facts_result.hosts.0.inventory_mode == "0"
+          - gather_all_facts_result.hosts.0.inventory.tag == "tag1"
+          - gather_all_facts_result.hosts.0.inventory.os == "Linux"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.dns == ""
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.ip == "192.168.0.1"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.main == "1"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.port == "10050"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.type == "1"
+          - gather_all_facts_result.hosts.0.hostinterfaces.0.useip == "1"
+
+    - name: "test - Gather facts of zabbix host with host_inventory"
+      community.zabbix.zabbix_host_info:
+        host_inventory:
+          - tag
+          - os
+      register: gather_facts_with_host_inventory_result
+
+    - ansible.builtin.assert:
+        that:
+          - gather_facts_with_host_inventory_result.hosts.0.inventory | length == 2
+          - gather_facts_with_host_inventory_result.hosts.0.inventory.tag == "tag1"
+          - gather_facts_with_host_inventory_result.hosts.0.inventory.os == "Linux"
+
+    - name: "test - Partial match of zabbix host name"
+      community.zabbix.zabbix_host_info:
+        host_name: HostForHostInfo
+        exact_match: false
+      register: partial_match_result
+
+    - ansible.builtin.assert:
+        that:
+          - partial_match_result.hosts | length == 1
+
+    - name: "test - Exact match of zabbix host name"
+      community.zabbix.zabbix_host_info:
+        exact_match: true
+      register: exact_match_result
+
+    - ansible.builtin.assert:
+        that:
+          - exact_match_result.hosts | length == 1
+
+    - name: "test - Exact match of zabbix host name(expectations - host not found)"
+      community.zabbix.zabbix_host_info:
+        host_name: HostForHostInfo
+        exact_match: true
+      register: exact_match_host_not_found_result
+      ignore_errors: true
+
+    - ansible.builtin.assert:
+        that:
+          - exact_match_host_not_found_result.failed is sameas true
+
+- name: Get all hosts
+  community.zabbix.zabbix_host_info:
+  register: get_all_hosts_result
+
+- ansible.builtin.assert:
+    that:
+      - get_all_hosts_result.hosts | length == 2
+
+- name: Clean up test host
+  community.zabbix.zabbix_host:
+    host_name: ExampleHostForHostInfoModule
+    state: absent

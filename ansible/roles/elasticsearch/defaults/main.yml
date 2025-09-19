@@ -1,0 +1,7 @@
+---
+es_cluster_name: "yc-diploma-es"
+es_network_host: "0.0.0.0"
+es_http_port: 9200
+es_single_node: true
+es_xpack_security_enabled: false
+es_heap: "512m"

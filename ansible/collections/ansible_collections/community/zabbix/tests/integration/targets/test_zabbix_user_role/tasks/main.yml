@@ -1,0 +1,103 @@
+---
+- name: test - Create a new Zabbix role
+  community.zabbix.zabbix_user_role:
+    state: present
+    name: Operators
+    type: User
+    rules:
+      ui.default_access: 0
+      ui:
+        - name: "monitoring.hosts"
+          status: 0
+        - name: "monitoring.maps"
+          status: 1
+  register: create_zabbix_user_role_result
+
+- ansible.builtin.assert:
+    that:
+      - create_zabbix_user_role_result.changed is sameas true
+
+# Check user role idempotency
+- name: test - Update a Zabbix role with same rules
+  community.zabbix.zabbix_user_role:
+    state: present
+    name: Operators
+    type: User
+    rules:
+      ui.default_access: 0
+      ui:
+        - name: "monitoring.hosts"
+          status: 0
+        - name: "monitoring.maps"
+          status: 1
+  register: create_zabbix_user_role_result
+
+- ansible.builtin.assert:
+    that:
+      - create_zabbix_user_role_result.changed is sameas false
+
+# Check user role change
+- name: test - Update a Zabbix role with new rules
+  community.zabbix.zabbix_user_role:
+    state: present
+    name: Operators
+    type: User
+    rules:
+      ui.default_access: 0
+      ui:
+        - name: "monitoring.hosts"
+          status: 1
+        - name: "monitoring.maps"
+          status: 0
+  register: create_zabbix_user_role_result
+
+- ansible.builtin.assert:
+    that:
+      - create_zabbix_user_role_result.changed is sameas true
+
+# Check user role remove
+- name: test - Remove Zabbix role
+  community.zabbix.zabbix_user_role:
+    state: absent
+    name: Operators
+  register: create_zabbix_user_role_result
+
+- ansible.builtin.assert:
+    that:
+      - create_zabbix_user_role_result.changed is sameas true
+
+- name: test - Create a new Zabbix role type Admin
+  community.zabbix.zabbix_user_role:
+    state: present
+    name: Admins
+    type: Admin
+    rules:
+      ui.default_access: 0
+  register: create_zabbix_user_role_admin_result
+
+- ansible.builtin.assert:
+    that:
+      - create_zabbix_user_role_admin_result.changed is sameas true
+
+- name: test - Remove Zabbix role type Admin
+  community.zabbix.zabbix_user_role:
+    state: absent
+    name: Admins
+
+- name: test - Create a new Zabbix role type Super Admin
+  community.zabbix.zabbix_user_role:
+    state: present
+    name: Super Admins
+    type: Super Admin
+    rules:
+      ui.default_access: 0
+  register: create_zabbix_user_role_super_admin_result
+
+- ansible.builtin.assert:
+    that:
+      - create_zabbix_user_role_super_admin_result.changed is sameas true
+
+- name: test - Remove Zabbix role type Super Admin
+  community.zabbix.zabbix_user_role:
+    state: absent
+    name: Super Admins

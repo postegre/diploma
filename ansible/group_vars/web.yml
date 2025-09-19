@@ -1,0 +1,9 @@
+zabbix_server_ip: 10.10.0.24
+zabbix_agent_server: "{{ zabbix_server_ip }}"
+zabbix_agent_serveractive: "{{ zabbix_server_ip }}"
+filebeat_enable_nginx_module: true
+ansible_ssh_common_args: "{{ ssh_common_args }}"
+filebeat_elasticsearch_url: "http://10.10.0.5:9200"   # внутренний IP elastic1
+filebeat_kibana_url: "10.10.0.5:5601"                 # Kibana на elastic1
+filebeat_setup_enabled: true                           # загрузить пайплайны/дашборды 1 раз
+filebeat_install_method: deb

@@ -1,0 +1,18 @@
+---
+# Zabbix repo / version
+zbx_major: "7.0"
+zbx_repo_base: "https://repo.zabbix.com/zabbix/{{ zbx_major }}/ubuntu"
+zbx_repo_key_url: "https://repo.zabbix.com/zabbix-official-repo.key"
+
+# PHP / Apache
+zbx_php_timezone: "UTC"
+
+# DB (PostgreSQL local)
+zbx_db_name: "zabbix"
+zbx_db_user: "zabbix"
+zbx_db_pass: "zabbixpass"
+zbx_db_host: "127.0.0.1"
+zbx_db_port: 5432
+
+# zabbix_server.conf params
+zbx_server_startpollers: 5

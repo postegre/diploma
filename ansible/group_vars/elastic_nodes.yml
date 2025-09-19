@@ -1,0 +1,13 @@
+---
+elastic_cluster_name: yc-diploma
+elastic_network_host: "0.0.0.0"
+elastic_http_port: 9200
+elastic_discovery_type: "single-node"
+elastic_security_enabled: false
+
+# filebeat на elastic-хосте (локальные URL)
+filebeat_elasticsearch_url: "http://127.0.0.1:9200"
+filebeat_kibana_url: "127.0.0.1:5601"
+filebeat_setup_enabled: true
+filebeat_enable_nginx_module: false
+ansible_ssh_common_args: "{{ ssh_common_args }}"

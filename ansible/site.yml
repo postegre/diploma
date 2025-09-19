@@ -1,0 +1,39 @@
+---
+- name: Configure web servers (nginx + zabbix-agent + filebeat)
+  hosts: web
+  become: true
+  roles:
+    - role: web
+      tags: [web, nginx]
+    - role: agent
+      tags: [agent, zabbix]
+    - role: filebeat
+      tags: [filebeat]
+
+- name: Configure Zabbix server (packages + DB + frontend)
+  hosts: zabbix
+  become: true
+  roles:
+    - role: zabbix
+      tags: [zabbix-server]
+
+- name: "Configure Zabbix server (API: autoregistration)"
+  hosts: zabbix
+  become: true
+  roles:
+    - role: zabbix_api
+      tags: [zabbix-api]
+
+- name: Configure Elasticsearch
+  hosts: elastic_nodes
+  become: true
+  roles:
+    - role: elasticsearch
+      tags: [elasticsearch]
+
+- name: Configure Kibana
+  hosts: kibana
+  become: true
+  roles:
+    - role: kibana
+      tags: [kibana]

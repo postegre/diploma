@@ -1,0 +1,28 @@
+# Managed by Ansible
+
+filebeat.config.modules:
+  enabled: true
+  path: ${path.config}/modules.d/*.yml
+  reload.enabled: false
+
+# inputs не используем — работаем через modules
+filebeat.inputs: []
+
+output.elasticsearch:
+  hosts: ["{{ filebeat_elasticsearch_url }}"]
+
+setup.template.enabled: true
+setup.template.overwrite: false
+setup.ilm.enabled: auto
+
+{% if filebeat_kibana_url %}
+setup.kibana:
+  host: "{{ filebeat_kibana_url }}"
+{% endif %}
+{% if filebeat_setup_enabled is defined %}
+setup.dashboards.enabled: {{ filebeat_setup_enabled | bool }}
+{% endif %}
+
+processors:
+  - add_host_metadata: ~
+  - add_cloud_metadata: ~

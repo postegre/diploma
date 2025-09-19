@@ -1,0 +1,19 @@
+# Версия .deb, если понадобится оффлайн-установка
+filebeat_version: "8.19.3"
+filebeat_pkg_file: "filebeat-{{ filebeat_version }}-amd64.deb"
+filebeat_deb_local: "{{ role_path }}/files/{{ filebeat_pkg_file }}"
+
+# Как ставить filebeat: repo | deb
+filebeat_install_method: "repo"
+
+# Куда отправлять события (ОБЯЗАТЕЛЬНО задать в group_vars для нужных хостов)
+filebeat_elasticsearch_url: ""
+
+# Kibana для одноразового filebeat setup (необязательно)
+filebeat_kibana_url: ""
+
+# Запускать ли `filebeat setup` (дашборды/шаблоны). По умолчанию — нет.
+filebeat_setup_enabled: false
+
+# Включать модуль nginx на этом хосте
+filebeat_enable_nginx_module: false

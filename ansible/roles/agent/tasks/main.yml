@@ -1,0 +1,35 @@
+---
+- name: Ensure zabbix-agent is installed
+  apt:
+    name: zabbix-agent
+    state: present
+    update_cache: yes
+  become: true
+
+- name: Render zabbix_agentd.conf from template
+  template:
+    src: zabbix_agentd.conf.j2
+    dest: /etc/zabbix/zabbix_agentd.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: validate and restart zabbix-agent
+  become: true
+
+- name: Ensure zabbix-agent enabled
+  service:
+    name: zabbix-agent
+    enabled: yes
+  become: true
+
+# диагностика после применения
+- name: Show last agent log lines (optional)
+  shell: "tail -n 50 /var/log/zabbix/zabbix_agentd.log || true"
+  register: agent_log
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Print agent log excerpt
+  debug:
+    var: agent_log.stdout

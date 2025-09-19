@@ -1,0 +1,5 @@
+zbx_api_url: "http://localhost/zabbix/api_jsonrpc.php"
+zbx_api_user: "Admin"
+zbx_api_password: "zabbix"
+zbx_autoreg_group: "Linux servers"
+

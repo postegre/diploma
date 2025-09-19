@@ -1,0 +1,31 @@
+# fix_agents.yml
+- name: Fix Zabbix agent identity and metadata on web hosts
+  hosts: web
+  become: true
+  tasks:
+    - name: Ensure Hostname is FQDN
+      lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: '^#?Hostname='
+        line: "Hostname={{ ansible_fqdn }}"
+        backrefs: true
+
+    - name: Ensure ServerActive points to Zabbix
+      lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: '^#?ServerActive='
+        line: 'ServerActive=zabbix.ru-central1.internal'
+        backrefs: true
+
+    - name: Ensure HostMetadata for autoregistration
+      lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: '^#?HostMetadata='
+        line: 'HostMetadata=auto-web'
+        backrefs: true
+        create: yes
+
+    - name: Restart zabbix-agent
+      service:
+        name: zabbix-agent
+        state: restarted

@@ -1,0 +1,10 @@
+---
+# Можно задать ИЛИ ip, ИЛИ host. Если ip не задан, возьмём host.
+zabbix_server_ip: ""
+zabbix_server_host: "zabbix.ru-central1.internal"
+
+# Единая переменная, которую будет использовать шаблон
+zabbix_server: "{{ zabbix_server_ip | default('', true) | ternary(zabbix_server_ip, zabbix_server_host) }}"
+
+# Как агент будет называться в Zabbix
+zabbix_agent_hostname: "{{ inventory_hostname }}"

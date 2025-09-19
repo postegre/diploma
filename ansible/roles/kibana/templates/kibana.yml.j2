@@ -1,0 +1,10 @@
+# Kibana basic config (no security; ES is unsecured too)
+server.name: {{ ansible_hostname | default('kibana') }}
+server.host: "0.0.0.0"
+server.port: 5601
+
+elasticsearch.hosts: ["http://127.0.0.1:9200"]
+
+# Optional but handy for labs
+status.allowAnonymous: true
+telemetry.enabled: false

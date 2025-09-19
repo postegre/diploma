@@ -1,0 +1,13 @@
+---
+# Zabbix UI/HTTP доступ с самого сервера (локально)
+zbx_api_url: "http://127.0.0.1/zabbix"
+zbx_api_user: "Admin"
+zbx_api_pass: "zabbix"
+
+# Куда класть новые хосты и какие шаблоны навешивать
+zbx_autoreg_group: "Linux servers"
+zbx_autoreg_templates:
+  - "Linux by Zabbix agent"
+
+# Какое HostMetadata ждём от агентов
+zbx_autoreg_metadata_value: "linux"

@@ -1,0 +1,23 @@
+---
+- block:
+  - name: Run tests for Zabbix < 7.0
+    when: zabbix_version is version('7.0', '<')
+    include_tasks: test_zabbix_proxy_before70.yml
+
+  - name: Run tests for Zabbix >= 7.0
+    when: zabbix_version is version('7.0', '>=')
+    include_tasks: test_zabbix_proxy_since70.yml
+
+  always:
+    - name: Cleanup proxy
+      community.zabbix.zabbix_proxy:
+        proxy_name: zbxproxy_example01
+        state: absent
+      ignore_errors: true
+
+    - name: Cleanup proxy group
+      community.zabbix.zabbix_proxy_group:
+        name: zbxproxy_group_example01
+        state: absent
+      ignore_errors: true
+      when: zabbix_version is version('7.0', '>=')

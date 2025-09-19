@@ -1,0 +1,23 @@
+---
+- name: Ensure nginx is installed
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+  become: true
+
+- name: Ensure nginx enabled and running
+  service:
+    name: nginx
+    state: started
+    enabled: true
+  become: true
+
+- name: Deploy site index.html
+  copy:
+    src: files/index.html
+    dest: /var/www/html/index.html
+    owner: www-data
+    group: www-data
+    mode: '0644'
+  become: true

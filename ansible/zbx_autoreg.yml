@@ -1,0 +1,143 @@
+- name: Configure Zabbix autoregistration action (v7)
+  hosts: zabbix
+  become: false
+  vars:
+    zbx_url: "http://localhost/zabbix/api_jsonrpc.php"
+    zbx_user: "Admin"
+    zbx_pass: "zabbix"
+    zbx_group_name: "Auto-Registered"
+    zbx_template_name: "Linux by Zabbix agent"
+    zbx_action_name: "Autoreg auto-web"
+    zbx_meta_value: "auto-web"
+
+  tasks:
+    - name: Zabbix API login v7 username password
+      uri:
+        url: "{{ zbx_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "user.login"
+          params:
+            username: "{{ zbx_user }}"
+            password: "{{ zbx_pass }}"
+          id: 1
+        return_content: yes
+      register: login
+
+    - name: Set auth token
+      set_fact:
+        zbx_auth: "{{ login.json.result | default('') }}"
+
+    - name: Fail if auth failed
+      fail:
+        msg: "Zabbix API login failed: {{ login.json | to_nice_json }}"
+      when: zbx_auth == ""
+
+    - name: Get template id
+      uri:
+        url: "{{ zbx_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "template.get"
+          params:
+            output: ["templateid","host"]
+            filter:
+              host: ["{{ zbx_template_name }}"]
+          auth: "{{ zbx_auth }}"
+          id: 2
+      register: tget
+
+    - name: Ensure template exists
+      fail:
+        msg: "Template '{{ zbx_template_name }}' not found. Response: {{ tget.json | to_nice_json }}"
+      when: (tget.json.result | length) == 0
+
+    - name: Set template id
+      set_fact:
+        zbx_template_id: "{{ tget.json.result[0].templateid }}"
+
+    - name: Get or create host group (get)
+      uri:
+        url: "{{ zbx_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "hostgroup.get"
+          params:
+            output: ["groupid","name"]
+            filter:
+              name: ["{{ zbx_group_name }}"]
+          auth: "{{ zbx_auth }}"
+          id: 3
+      register: gget
+
+    - name: Create host group if missing
+      uri:
+        url: "{{ zbx_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "hostgroup.create"
+          params:
+            name: "{{ zbx_group_name }}"
+          auth: "{{ zbx_auth }}"
+          id: 4
+      register: gcreate
+      when: (gget.json.result | length) == 0
+
+    - name: Set group id
+      set_fact:
+        zbx_group_id: >-
+          {{ (gget.json.result[0].groupid if (gget.json.result|length)>0
+              else gcreate.json.result.groupids[0]) }}
+
+    - name: Check existing autoreg action
+      uri:
+        url: "{{ zbx_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "action.get"
+          params:
+            output: ["actionid","name","status","eventsource"]
+            filter:
+              name: ["{{ zbx_action_name }}"]
+            selectOperations: "extend"
+            selectConditions: "extend"
+          auth: "{{ zbx_auth }}"
+          id: 5
+      register: aget
+
+    - name: Create autoreg action if missing
+      uri:
+        url: "{{ zbx_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "action.create"
+          params:
+            name: "{{ zbx_action_name }}"
+            eventsource: 2                      # 2 = auto-registration
+            status: 0                           # enabled
+            conditions:
+              - conditiontype: 24               # host metadata
+                operator: 2                     # contains
+                value: "{{ zbx_meta_value }}"
+            operations:
+              - operationtype: 4                # link template
+                optemplate:
+                  - templateid: "{{ zbx_template_id }}"
+              - operationtype: 6                # add to host group
+                opgroup:
+                  - groupid: "{{ zbx_group_id }}"
+          auth: "{{ zbx_auth }}"
+          id: 6
+      when: (aget.json.result | length) == 0

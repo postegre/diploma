@@ -1,0 +1,14 @@
+#cloud-config
+package_update: true
+packages:
+  - python3
+  - python3-pip
+  - git
+  - ansible
+runcmd:
+  - 'echo "ClientAliveInterval 60" >> /etc/ssh/sshd_config && systemctl restart ssh'
+users:
+  - name: ${vm_user}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo
+    shell: /bin/bash

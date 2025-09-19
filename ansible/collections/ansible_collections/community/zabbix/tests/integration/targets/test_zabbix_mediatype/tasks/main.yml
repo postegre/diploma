@@ -1,0 +1,21 @@
+---
+- block:
+  - name: Run tests
+    include_tasks: test_zabbix_mediatype.yml
+
+  always:
+    - name: Cleanup mediatype
+      community.zabbix.zabbix_mediatype:
+        name: "{{ item.name }}"
+        type: "{{ item.type }}"
+        state: absent
+      ignore_errors: true
+      loop:
+        - name: Example email
+          type: email
+        - name: Example script
+          type: script
+        - name: Example sms
+          type: sms
+        - name: Example webhook
+          type: webhook

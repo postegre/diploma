@@ -1,0 +1,15 @@
+<?php
+// Managed by Ansible
+$DB["TYPE"]     = "POSTGRESQL";
+$DB["SERVER"]   = "{{ zbx_db_host }}";
+$DB["PORT"]     = "{{ zbx_db_port }}";
+$DB["DATABASE"] = "{{ zbx_db_name }}";
+$DB["USER"]     = "{{ zbx_db_user }}";
+$DB["PASSWORD"] = "{{ zbx_db_pass }}";
+$DB["SCHEMA"]   = "public";
+
+$ZBX_SERVER      = "127.0.0.1";
+$ZBX_SERVER_PORT = "10051";
+$ZBX_SERVER_NAME = "Zabbix";
+
+$IMAGE_FORMAT_DEFAULT = IMAGE_FORMAT_PNG;

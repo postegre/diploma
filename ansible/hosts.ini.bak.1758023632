@@ -1,0 +1,15 @@
+[web]
+web-a ansible_host=10.10.10.29
+web-b ansible_host=10.10.11.27
+
+[elastic_nodes]
+elastic1 ansible_host=10.10.10.5
+
+[bastion]
+bastion ansible_host=89.169.141.63 ansible_user=ubuntu
+
+[all:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+# ProxyJump через бастион (используем пользователя из группы [bastion])
+ansible_ssh_common_args='-o ProxyJump=%(ansible_user)s@89.169.141.63 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

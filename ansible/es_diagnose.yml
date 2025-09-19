@@ -1,0 +1,121 @@
+- hosts: elastic_nodes
+  gather_facts: yes
+  vars:
+    outdir: "es_diag/{{ inventory_hostname }}"
+  tasks:
+    - name: Create local output dir on controller
+      delegate_to: localhost
+      run_once: true
+      ansible.builtin.file:
+        path: "es_diag"
+        state: directory
+        mode: "0755"
+
+    - name: Ensure host dir exists locally
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ outdir }}"
+        state: directory
+        mode: "0755"
+
+    # Пакет/версии
+    - name: dpkg -l elasticsearch
+      ansible.builtin.shell: "dpkg -l | egrep '^ii\\s+elasticsearch|^rc\\s+elasticsearch' || true"
+      register: dpkg_es
+      changed_when: false
+
+    - name: apt-cache policy elasticsearch
+      ansible.builtin.shell: "apt-cache policy elasticsearch || true"
+      register: apt_policy
+      changed_when: false
+
+    # Служба и логи
+    - name: systemctl status elasticsearch
+      ansible.builtin.shell: "systemctl status elasticsearch --no-pager || true"
+      register: svc_status
+      changed_when: false
+
+    - name: journalctl -u elasticsearch (last 200 lines)
+      ansible.builtin.shell: "journalctl -u elasticsearch -n 200 --no-pager || true"
+      register: jctl
+      changed_when: false
+
+    # Порты/HTTP
+    - name: ss -lntp | grep 9200
+      ansible.builtin.shell: "ss -lntp | grep ':9200' || true"
+      register: port9200
+      changed_when: false
+
+    - name: curl 127.0.0.1:9200 (tagline)
+      ansible.builtin.shell: "curl -s --max-time 2 http://127.0.0.1:9200 | sed -n '1,60p' || true"
+      register: curl9200
+      changed_when: false
+
+    # Системные требования
+    - name: vm.max_map_count
+      ansible.builtin.shell: "sysctl -n vm.max_map_count || true"
+      register: maxmap
+      changed_when: false
+
+    - name: limits for elasticsearch user
+      ansible.builtin.shell: "su -s /bin/bash -c 'ulimit -a' elasticsearch 2>/dev/null || true"
+      register: ulimit_es
+      changed_when: false
+
+    - name: Disk space
+      ansible.builtin.shell: "df -hT | sed -n '1,200p'"
+      register: dfh
+      changed_when: false
+
+    - name: Java presence (ES 8 обычно в комплекте, но проверим)
+      ansible.builtin.shell: "java -version 2>&1 || true"
+      register: javaver
+      changed_when: false
+
+    # Файлы конфигурации/журналы
+    - name: ls -l /etc/elasticsearch
+      ansible.builtin.shell: "ls -l /etc/elasticsearch || true"
+      register: ls_etc
+      changed_when: false
+
+    - name: head -n 120 /etc/elasticsearch/elasticsearch.yml
+      ansible.builtin.shell: "sed -n '1,120p' /etc/elasticsearch/elasticsearch.yml 2>/dev/null || true"
+      register: es_yml_head
+      changed_when: false
+
+    - name: tail -n 120 /var/log/elasticsearch/elasticsearch.log
+      ansible.builtin.shell: "tail -n 120 /var/log/elasticsearch/elasticsearch.log 2>/dev/null || true"
+      register: es_log_tail
+      changed_when: false
+
+    # Что видит Ansible по переменным роли (если есть)
+    - name: Dump ES-related hostvars (es_*)
+      ansible.builtin.debug:
+        var: hostvars[inventory_hostname] | dict2items | selectattr('key','search','^es_') | list
+      when: hostvars[inventory_hostname] is defined
+
+    # Сохранение всех выводов на контрол-ноду
+    - name: Write diagnostics locally
+      delegate_to: localhost
+      vars:
+        files:
+          dpkg_es.txt: "{{ dpkg_es.stdout | default('') }}"
+          apt_policy.txt: "{{ apt_policy.stdout | default('') }}"
+          service_status.txt: "{{ svc_status.stdout | default('') }}"
+          journalctl_tail.txt: "{{ jctl.stdout | default('') }}"
+          port_9200.txt: "{{ port9200.stdout | default('') }}"
+          curl_9200.txt: "{{ curl9200.stdout | default('') }}"
+          vm.max_map_count.txt: "{{ maxmap.stdout | default('') }}"
+          ulimit_elasticsearch.txt: "{{ ulimit_es.stdout | default('') }}"
+          df_hT.txt: "{{ dfh.stdout | default('') }}"
+          java_version.txt: "{{ javaver.stdout | default('') }}"
+          etc_elasticsearch_ls.txt: "{{ ls_etc.stdout | default('') }}"
+          elasticsearch_yml_head.txt: "{{ es_yml_head.stdout | default('') }}"
+          elasticsearch_log_tail.txt: "{{ es_log_tail.stdout | default('') }}"
+      loop: "{{ files | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      ansible.builtin.copy:
+        dest: "{{ outdir }}/{{ item.key }}"
+        content: "{{ item.value }}"
+        mode: "0644"

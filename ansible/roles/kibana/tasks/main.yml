@@ -1,0 +1,85 @@
+---
+# 1) Проверяем, установлена ли Kibana (idempotent)
+- name: Detect if Kibana is installed
+  ansible.builtin.shell: "dpkg-query -W -f='${Status}' kibana 2>/dev/null | awk '{print $3}'"
+  register: kibana_dpkg_status
+  changed_when: false
+  failed_when: false
+  tags: [kibana]
+
+# 2) Оффлайн-копия .deb, только если задан kibana_deb_local_src и Kibana ещё не установлена
+- name: Copy Kibana deb package (offline)
+  ansible.builtin.copy:
+    src: "{{ kibana_deb_local_src }}"
+    dest: "/tmp/{{ kibana_deb_local_src | basename }}"
+    mode: "0644"
+  when:
+    - (kibana_deb_local_src | default('', true) | length) > 0
+    - kibana_dpkg_status.stdout != 'installed'
+  tags: [kibana]
+
+# 3) Оффлайн-установка .deb при наличии файла
+- name: Install Kibana from local deb (offline)
+  ansible.builtin.apt:
+    deb: "/tmp/{{ kibana_deb_local_src | basename }}"
+    state: present
+  when:
+    - (kibana_deb_local_src | default('', true) | length) > 0
+    - kibana_dpkg_status.stdout != 'installed'
+  tags: [kibana]
+
+# 4) Если .deb не задан — просто убедимся, что пакет есть (через репозитории, либо уже установлен)
+- name: Ensure Kibana installed (from repos if available)
+  ansible.builtin.package:
+    name: kibana
+    state: present
+  when:
+    - (kibana_deb_local_src | default('', true) | length) == 0
+  tags: [kibana]
+
+# 5) Разворачиваем конфиг (если он у тебя уже корректный — шаблон менять не нужно)
+- name: Deploy kibana.yml
+  ansible.builtin.template:
+    src: "kibana.yml.j2"
+    dest: "/etc/kibana/kibana.yml"
+    owner: root
+    group: kibana
+    mode: "0640"
+  notify: Restart kibana
+  tags: [kibana, kibana_config]
+
+# 6) Включаем и запускаем сервис
+- name: Enable and start kibana
+  ansible.builtin.systemd:
+    name: kibana
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [kibana]
+
+# 7) Немедленно применяем возможный notify (чтобы дальше ждать уже после рестарта)
+- name: Flush handlers (restart kibana if config changed)
+  ansible.builtin.meta: flush_handlers
+  tags: [kibana, kibana_config, kibana_check]
+
+# 8) Ждём порт
+- name: Wait for Kibana TCP port
+  ansible.builtin.wait_for:
+    host: "127.0.0.1"
+    port: 5601
+    delay: 1
+    timeout: 180
+  tags: [kibana_check]
+
+# 9) Пингуем статус (503 допустим на прогреве)
+- name: Check Kibana status API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:5601/api/status"
+    method: GET
+    status_code: [200, 503]
+    return_content: true
+  register: kibana_status
+  until: kibana_status.status in [200, 503]
+  retries: 40
+  delay: 3
+  tags: [kibana_check]
