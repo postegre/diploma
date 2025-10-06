@@ -1,173 +1,235 @@
-Diploma: HA Web + Monitoring + Logs + Backups (Yandex Cloud, Terraform + Ansible)
-TL;DR
+Дипломный проект: инфраструктура в Яндекс Облаке с Terraform + Ansible
+(Nginx веб-узлы, Elasticsearch + Kibana, Zabbix, сбор логов Filebeat)
 
-Инфраструктура для отказоустойчивого сайта с базовым мониторингом, сбором логов и резервным копированием. Всё описано кодом (Terraform + Ansible), секреты в git не хранятся.
-Реализованы: сеть, ВМ, балансировка, базовый веб, агентский мониторинг, бэкапы, каркас логирования.
-Ограничения: из-за сетевых/санкционных ограничений и офлайн-пакетов логирование на Elastic/Kibana доведено до MVP/partial, см. раздел «Что не удалось завершить».
+1) О чём проект и что сделаноо
 
-Архитектура (MVP)
+Цель - описать и развернуть минимально жизнеспособный стек в Яндекс Облаке средствами IaC:
 
-Сеть: VPC, приватные/публичные подсети, SG, (опционально) Bastion/NAT.
+Сеть VPC, подсети, Security Groups, публичный bastion
 
-Балансировка: L4/L7 LB с health-check, раздаёт трафик на 2× web-VM (Nginx).
+Веб-уровень: 2 ВМ с Ubuntu + Nginx (+ Filebeat для логов)
 
-Мониторинг: Zabbix-agent на хостах (каркас Zabbix-server/Prometheus присутствует в коде).
+Логирование: 1 ВМ с Elasticsearch + Kibana
 
-Логи: Filebeat на хостах → Elastic (single-node)/Kibana (каркас; см. ограничения ниже).
+Мониторинг: Zabbix-server
 
-Бэкапы: snapshot-политика (ночные слепки, ретеншн ~7 дней; параметры — в переменных).
+Автоматизация конфигурации — Ansible с ролями и переменными групп
 
-Безопасность: SSH по ключам, токены/секреты вне git, базовые firewall-правила.
+SSH-доступ на внутренние хосты через ProxyJump (bastion)
 
-Структура репозитория
+Единый плейбук и теги: можно применять частично (только elastic/kibana или только filebeat и т.п.)
+
+Чистка секретов и безопасные шаблоны конфигов (без захардкоженных паролей в гите)
+
+2) Архитектура и компоненты
+2.1. Топология
+
+bastion (публичный IP) — единственная точка входа по SSH
+
+elastic1 (внутренний IP) — Elasticsearch 8.x + Kibana 8.x
+
+web-a, web-b (внутренние IP) — Nginx, Filebeat, опционально Zabbix-agent
+
+zabbix (опционально отдельная ВМ) — Zabbix server + frontend + Postgres
+
+Вся внутренняя связь — по приватным адресам. Filebeat на веб-узлах отправляет логи в Elasticsearch; Kibana — визуализация; Zabbix следит за доступностью сервисов
+
+2.2. Безопасность
+
+Доступ к приватным ВМ только через bastion (ProxyJump)
+
+Security Groups открывают наружу только 22/tcp на bastion и 80/tcp (если нужно опубликовать фронтенд)
+
+Пароли в шаблонах не коммитятся: все чувствительные значения — через переменные, Ansible Vault (при необходимости) или генерируются на лету
+
+3) Репозиторий: структура
 .
-├─ ansible/                 # роли и плейбуки (web, zabbix-agent, filebeat, elastic/kibana и т.д.)
-├─ terraform/               # Terraform для Yandex Cloud (VPC, LB, ВМ, SG, снапшоты и пр.)
-├─ gen_inventory.sh         # генерация Ansible-инвентаря из Terraform/YC
-├─ README.md                # этот файл
-
-Предварительные требования
-
-Ubuntu 22.04+/macOS, bash.
-
-Terraform ≥ 1.5, Ansible ≥ 2.15.
-
-Доступ в Yandex Cloud (service account + ключи вне git).
-
-ssh-доступ по ключам.
-
-(Опционально) git-lfs, если будете хранить крупные офлайн-пакеты.
-
-Настройка переменных
-
-В terraform/ создайте terraform.tfvars (секреты в git не коммитим):
-
-cloud_id      = "..."
-folder_id     = "..."
-sa_key_file   = "/path/to/authorized_key.json"   # вне репозитория
-zone          = "ru-central1-a"
-# ... остальные переменные модуля/проекта
+├── terraform/                 # описание сети и ВМ в Яндекс Облаке
+│   ├── main.tf
+│   ├── variables.tf
+│   └── terraform.tfvars.example
+└── ansible/
+    ├── ansible.cfg
+    ├── hosts.ini              # inventory (группы: bastion, elastic_nodes, web, zabbix)
+    ├── site.yml               # корневой плейбук
+    ├── group_vars/
+    │   ├── all.yml            # bastion_host + общие SSH-аргументы
+    │   ├── elastic_nodes.yml  # настройки Elasticsearch/Kibana + filebeat для elastic1
+    │   ├── web.yml            # nginx, filebeat для web-узлов
+    │   └── zabbix.yml         # параметры Zabbix API/БД (учебные)
+    └── roles/
+        ├── nginx/
+        ├── elasticsearch/
+        ├── kibana/
+        ├── filebeat/
+        └── zabbix/
 
 
-Для Ansible — group_vars/host_vars по месту. Инвентарь:
+Ключевая идея: всё управляется переменными в group_vars, а доступ через bastion — одной строкой в all.yml
 
-./gen_inventory.sh > ansible/hosts.ini
+4) Переменные (главные)
+4.1. group_vars/all.yml (пример)
+ansible_user: ubuntu
+ansible_ssh_private_key_file: /home/USER/.ssh/id_rsa
 
-Развёртывание
-# 1) Terraform
-cd terraform
-terraform init
-terraform plan -var-file=terraform.tfvars
-terraform apply -var-file=terraform.tfvars -auto-approve
+# Сквозной ProxyJump для всех внутренних хостов:
+ssh_common_args: >-
+  -o ProxyJump={{ ansible_user }}@{{ bastion_host }}
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ServerAliveInterval=60
+  -o ServerAliveCountMax=3
 
-# 2) Инвентарь для Ansible
-cd ..
-./gen_inventory.sh > ansible/hosts.ini
+4.2. group_vars/web.yml (пример)
+zabbix_server_ip: 10.10.0.24
+zabbix_agent_server: "{{ zabbix_server_ip }}"
+zabbix_agent_serveractive: "{{ zabbix_server_ip }}"
 
-# 3) Конфигурация ВМ
-ansible -i ansible/hosts.ini all -m ping
-ansible-playbook -i ansible/hosts.ini ansible/site.yml
+ansible_ssh_common_args: "{{ ssh_common_args }}"
 
-Проверка работоспособности
+# Filebeat на web → в Elasticsearch на elastic1:
+filebeat_elasticsearch_url: "http://10.10.0.5:9200"
+filebeat_kibana_url: "10.10.0.5:5601"
+filebeat_setup_enabled: true
+filebeat_enable_nginx_module: true
 
-Веб:
+4.3. group_vars/elastic_nodes.yml
+elastic_cluster_name: yc-diploma
+elastic_network_host: "0.0.0.0"
+elastic_http_port: 9200
+elastic_discovery_type: "single-node"
+elastic_security_enabled: false
 
-Откройте http://<LOAD_BALANCER_IP>/ — должна отдаваться страница с двух web-узлов по очереди (проверить заголовок/метку узла).
+# Filebeat локально на elastic1:
+filebeat_elasticsearch_url: "http://127.0.0.1:9200"
+filebeat_kibana_url: "127.0.0.1:5601"
+filebeat_setup_enabled: true
+filebeat_enable_nginx_module: false
 
-Health-checks LB — «healthy».
+ansible_ssh_common_args: "{{ ssh_common_args }}"
 
-Мониторинг:
+4.4. group_vars/zabbix.yml (учебный пример)
+zbx_api_url: "http://localhost/zabbix/api_jsonrpc.php"
+zbx_api_user: "Admin"
+zbx_api_password: "zabbix"
+zbx_autoreg_group: "Linux servers"
 
-На ВМ: systemctl status zabbix-agent → active.
+5) Развёртывание: как это делалось
+5.1. Terraform (суммарно)
 
-(Если поднимали Zabbix-server/Prometheus) — доступен веб-интерфейс/метрики.
+terraform/terraform.tfvars (cloud_id, folder_id, подсети, публичный ключ, размеры ВМ).
 
-Логи (MVP):
+terraform init && terraform plan && terraform apply
 
-filebeat test output — должен подтверждать доступность цели или выводим в локальный файл/стаб (см. ограничения).
+В выходных переменных — IP bastion и внутренних узлов
 
-Бэкапы:
+5.2. Ansible: одна строка для ProxyJump
 
-В YC/через CLI видна snapshot-политика и ночные слепки дисков.
+В group_vars/all.yml bastion_host фактический публичный IP
 
-Что сделано 
+Inventory ansible/hosts.ini указывает внутренние IP и не хранит опасных форматов %() — всё проксируется за счёт ansible_ssh_common_args из group_vars
 
-Описан кодом полный каркас: сеть, балансировщик, ВМ, security-группы.
+5.3. Порядок применения плейбуков
+# Проверка связи:
+ansible -i hosts.ini all -m ping
 
-Веб-уровень: 2×web-узла за LB (Nginx), health-check настроен.
+# 1) Elasticsearch + Kibana на elastic_nodes
+ansible-playbook -i hosts.ini site.yml -l elastic_nodes -t elasticsearch,kibana
 
-Мониторинг на узлах: zabbix-agent (плейбуки/роли присутствуют, сервис активируется).
+# 2) Веб-узлы: nginx + filebeat
+ansible-playbook -i hosts.ini site.yml -l web -t nginx,filebeat,filebeat_config,filebeat_setup
 
-Логирование: filebeat установлен и нацелен на Elastic (single-node) — каркас имеется, конфиги параметризованы.
+# 3) Zabbix (если выбран)
+ansible-playbook -i hosts.ini site.yml -l zabbix -t zabbix
 
-Бэкап-стратегия: snapshot policy (ежедневно, ретеншн ~7 дней — регулируется переменными).
-
-Безопасность: доступ по SSH-ключам, токены/секреты не хранятся в git; .gitignore исключает .terraform/, состояния, логи и крупные артефакты.
-
-Скрипт для генерации инвентаря: gen_inventory.sh (ускоряет связку TF → Ansible).
-
-Что не удалось довести до конца 
-
-Полная обвязка ELK (Elastic/Kibana) онлайн:
-Из-за сетевых/санкционных ограничений скачивание репозиториев/пакетов и доступ web-узлов до :9200 периодически падает (timeouts). Оффлайн-установка через .deb размером >100 MB блокируется GitHub (лимит), LFS не использовался, чтобы не увеличивать вес/квоты.
-
-Единый дашборд логов в Kibana:
-Каркас есть, но финальная связность (filebeat → elastic → kibana index patterns) не зафиксирована как стабильно воспроизводимая в онлайне.
-
-Автоконфиг для Zabbix-server/Frontend:
-Агентский слой готов; серверная часть/фронт могут требовать ручной донастройки (DB, веб-морда) либо альтернативу (Prometheus stack).
-
-Основные трудности и как решались
-
-Санкции/сеть: недоступность внешних репозиториев и провайдеров → использовались офлайн-пакеты/зеркала; часть задач вынесена в роли, но крупные .deb не храним в git (см. ниже).
-
-GitHub лимиты: при первом пуше попали бинарники >100 MB → репозиторий очищен, добавлен .gitignore; крупные артефакты исключены.
-
-Filebeat/Elastic: конфиги и маршрут до :9200 ловили timeouts (в приватных подсетях + SG). Добавлены переменные и проверки filebeat test output, чтобы быстро диагностировать сетевой/ACL-барьер.
-
-Nginx/Zabbix-frontend: на ранних итерациях отдавалась стандартная страница Nginx — роли приведены к явному деплою веб-контента/вирт-хостов; Zabbix-frontend оставлен как опциональный модуль.
-
-Рекомендации по повторяемости (если будете проверять)
-
-Артефакты: не хранить .deb в git. В Ansible использовать get_url с внутреннего зеркала (S3/Object Storage/локальный nginx) + контроль SHA256.
-
-Сеть: проверить маршруты/SG для web → elastic:9200 и доступ LB снаружи.
-
-Заменяемость логов: если Elastic недоступен, временно направлять Filebeat в локальный файл/Vector/JSON-приёмник, чтобы показать поток логов и формат.
-
-Secrets: держать terraform.tfvars/ключи вне репозитория; приложить только _example.tfvars.
-
-Как переключить логи на офлайн-пакеты/зеркало (пример ansible)
-- name: Download Elasticsearch deb from internal mirror
-  get_url:
-    url: "https://<internal-mirror>/elasticsearch-8.14.3-amd64.deb"
-    dest: "/tmp/elasticsearch-8.14.3-amd64.deb"
-    mode: "0644"
-
-- name: Install Elasticsearch
-  apt:
-    deb: "/tmp/elasticsearch-8.14.3-amd64.deb"
+6) Проверка работоспособности
+6.1. Kibana жива
+ansible -i hosts.ini elastic_nodes -m uri \
+  -a 'url=http://127.0.0.1:5601/api/status status_code=200,503 return_content=yes' -o
 
 
-Аналогично для Kibana/Filebeat. В prod-версии — репозитории/подписи, systemd-unit overrides, health-checks, алерты.
+Ожидаем overall.level: "available".
 
-Уничтожение инфраструктуры
-cd terraform
-terraform destroy -var-file=terraform.tfvars -auto-approve
+6.2. Filebeat шлёт логи
+# На web: тест коннекта к ES
+ansible -i hosts.ini web -b -a 'filebeat test output || true'
 
-Планы на доработку (roadmap)
+# На elastic1: появились индексы/датастримы
+ansible -i hosts.ini elastic_nodes -m uri \
+  -a 'url=http://127.0.0.1:9200/_cat/indices/filebeat*?v return_content=yes'
 
-Перенос логирования в устойчивую схему: либо ELK с внутренним зеркалом, либо Loki+Promtail/Vector.
+ansible -i hosts.ini elastic_nodes -m uri \
+  -a 'url=http://127.0.0.1:9200/_data_stream?filter_path=data_streams.name,data_streams.indices.index_name&pretty return_content=yes'
 
-Полноценный мониторинг: автодискавери хостов, базовые алерты (CPU/RAM/Disk/Service) в Slack/Telegram.
+6.3. Nginx отвечает
+ansible -i hosts.ini web -a 'curl -I http://127.0.0.1/ || true'
 
-Ужесточение безопасности: Bastion jump host по умолчанию, закрытые SG, отключение паролей, CIS-профили.
+6.4. Zabbix UI
 
-CI/CD: terraform fmt/validate, ansible-lint, Molecule-тесты ролей, pre-commit.
+Открывается login-страница, логин/пароль: Admin/zabbix
 
-Бэкапы БД с PITR (если появится stateful-сервис), ретеншн/policy в переменные окружения.
+7) Типичные проблемы и как решались
 
-Примечание по безопасности
+SSH «vdollar_percent_expand…»
+Причина: в hosts.ini/шаблонах попали строки вида %(ansible_user)s
+Решение: убрать форматные %(), вынести ProxyJump в group_vars/all.yml (ssh_common_args)
 
-Репозиторий не содержит токенов/секретов. Все чувствительные значения задаются через локальные файлы (terraform.tfvars) или переменные окружения и не коммитятся.
+Сломанный known_hosts при смене IP
+При смене bastion IP — конфликт отпечатков ключа
+Решение: очистка строки с этим IP из ~/.ssh/known_hosts (или ssh-keygen -R <ip>), затем повторное подключение
 
+apt 403 InRelease для репо Elastic
+Решения:
+
+использовать локальные .deb из roles/*/files/
+
+
+Filebeat на web смотрит в 127.0.0.1:9200
+Это не elastic1 → таймаут
+Решение: на web всегда http://<внутр. ip elastic1>:9200. Проверить group_vars/web.yml.
+
+
+8) Безопасность и отсутствие секретов в гите
+
+Перед коммитом выполнялись проверки:
+
+# закрытые ключи
+grep -RIl --binary-files=without-match -E 'BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY' \
+  --exclude-dir=.git --exclude-dir=collections --exclude='*.deb' --exclude-dir='roles/*/files' .
+
+# логины с паролями в URL
+grep -RIn --binary-files=without-match -E '[a-z]+://[^/@ ]+:[^/@ ]+@' \
+  --exclude-dir=.git --exclude-dir=collections --exclude='*.deb' --exclude-dir='roles/*/files' .
+
+# подозрительные слова
+grep -RIn --binary-files=without-match -i -E '(password|passwd|pwd|secret|token|api[_-]?key|bearer\s+[A-Za-z0-9._-]+)' \
+  --exclude-dir=.git --exclude-dir=collections --exclude='*.deb' --exclude-dir='roles/*/files' .
+
+
+9) Как удалить инфраструктуру
+# в каталоге terraform/
+terraform destroy
+
+10) Ограничения и развитие
+
+Кластер Elasticsearch — single-node для диплома . Для прод — минимум 3 мастера и дисковая отказоустойчивость
+
+Без включённой security в Elastic (xpack): в проде — только с TLS/учётками
+
+Zabbix и Postgres можно разделить по ВМ, добавить резервные копии
+
+Filebeat собирал только Nginx-логи. Можно подключить system/auth/journal, парсинг по ECS
+
+1) Итог
+
+Проект показывает:
+
+Умение описывать инфраструктуру кодом (Terraform + Ansible).
+
+Разделение ролей и параметров (group_vars), единый ProxyJump для приватной топологии.
+
+Сбор и визуализацию логов (Filebeat → Elasticsearch → Kibana).
+
+Базовый мониторинг (Zabbix).
+
+Аккуратную работу с секретами (проверки и отсутствие приватных данных в репозитории).
